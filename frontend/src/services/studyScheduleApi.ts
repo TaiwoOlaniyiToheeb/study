@@ -71,6 +71,13 @@ export const studyScheduleApi = {
       body: JSON.stringify(period),
     }),
 
-  deleteAvailability: (id: string) =>
+    deleteAvailability: (id: string) =>
     request<void>(`/study-availability/${id}`, { method: "DELETE" }),
+
+  putStudyPreferences: (payload: {
+    exam_goal_type: string; exam_goal_other_text?: string; exam_date: string;
+    daily_study_minutes_goal: number; preferred_time: string;
+    session_duration_min: number; break_duration_min: number; max_sessions_per_day: number;
+  }) =>
+    request("/study-preferences", { method: "PUT", body: JSON.stringify(payload) }),
 };
