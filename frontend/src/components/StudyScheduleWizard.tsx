@@ -55,14 +55,25 @@ export default function StudyScheduleWizard({ subjects, onScheduleGenerated, onC
     setStep(STEP_ORDER[Math.max(stepIndex - 1, 0)]);
   }
 
-  async function handleGenerate() {
+    async function handleGenerate() {
     setGenerating(true);
     setError(null);
     try {
-      // In a real integration, goal/preferences/availability would be PUT to
-      // their own endpoints first (POST /study-availability per period, and
-      // a preferences endpoint not shown here for brevity — same pattern as
-      // availability.py). Then:
+      for (const period of availability) {
+        await studyScheduleApi.createAvailability(period);
+      }
+
+      await studyScheduleApi.putStudyPreferences({
+        exam_goal_type: goal.exam_goal_type,
+        exam_goal_other_text: goal.exam_goal_other_text,
+        exam_date: goal.exam_date,
+        daily_study_minutes_goal: goal.daily_study_minutes_goal,
+        preferred_time: preferences.preferred_time,
+        session_duration_min: preferences.session_duration_min,
+        break_duration_min: preferences.break_duration_min,
+        max_sessions_per_day: preferences.max_sessions_per_day,
+      });
+
       const schedule = await studyScheduleApi.generateSchedule(selectedSubjectIds);
       onScheduleGenerated(schedule);
     } catch (e: any) {
@@ -71,7 +82,6 @@ export default function StudyScheduleWizard({ subjects, onScheduleGenerated, onC
       setGenerating(false);
     }
   }
-
   return (
     <div className="mx-auto max-w-2xl space-y-6 p-4">
       <ProgressBar currentIndex={stepIndex} total={STEP_ORDER.length} />
