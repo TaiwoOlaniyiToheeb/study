@@ -30,6 +30,18 @@ export const studyScheduleApi = {
       body: JSON.stringify(subjectIds),
     }),
 
+  createManualSchedule: (payload: {
+    exam_date: string;
+    sessions: {
+      subject_id: string; topic_id: string; activity_type: string;
+      scheduled_date: string; start_time: string; duration_minutes: number;
+    }[];
+  }) =>
+    request<StudySchedule>("/study-schedule/manual", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
   regenerateWithInstruction: (scheduleId: string, instruction: string) =>
     request<StudySchedule>("/study-schedule/regenerate", {
       method: "POST",
@@ -73,4 +85,18 @@ export const studyScheduleApi = {
 
   deleteAvailability: (id: string) =>
     request<void>(`/study-availability/${id}`, { method: "DELETE" }),
+
+  putStudyPreferences: (payload: {
+    exam_goal_type: string; exam_goal_other_text?: string; exam_date: string;
+    daily_study_minutes_goal: number; preferred_time: string;
+    session_duration_min: number; break_duration_min: number; max_sessions_per_day: number;
+  }) =>
+    request("/study-preferences", { method: "PUT", body: JSON.stringify(payload) }),
+
+  listSubjects: () => request<{ id: string; name: string }[]>("/subjects"),
+
+  listTopics: (subjectId: string) =>
+    request<{ id: string; subject_id: string; name: string; difficulty: number; sequence_index: number }[]>(
+      `/subjects/${subjectId}/topics`
+    ),
 };

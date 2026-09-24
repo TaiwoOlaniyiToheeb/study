@@ -65,6 +65,14 @@ def create_subject(payload: SubjectIn, db: Session = Depends(get_db)):
     return subject
 
 
+@router.get("/subjects/{subject_id}/topics", response_model=list[TopicOut])
+def list_topics(subject_id: UUID, db: Session = Depends(get_db)):
+    subject = db.query(Subject).get(subject_id)
+    if not subject:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subject not found")
+    return db.query(Topic).filter(Topic.subject_id == subject_id).order_by(Topic.sequence_index).all()
+
+
 @router.post("/subjects/{subject_id}/topics", response_model=TopicOut, status_code=status.HTTP_201_CREATED)
 def create_topic(subject_id: UUID, payload: TopicIn, db: Session = Depends(get_db)):
     subject = db.query(Subject).get(subject_id)

@@ -202,6 +202,41 @@ class StudyScheduleOut(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Fully manual scheduling (student builds every session themselves — no AI,
+# no spaced-repetition engine). Hard constraints (no overlap, not past the
+# exam date, inside declared availability) are still enforced server-side;
+# only the AI's prioritization/spaced-repetition layer is skipped.
+# ---------------------------------------------------------------------------
+
+class ManualSessionIn(BaseModel):
+    subject_id: UUID
+    topic_id: UUID
+    activity_type: ActivityType
+    scheduled_date: date
+    start_time: time
+    duration_minutes: int = Field(gt=0, le=180)
+
+    @field_validator("scheduled_date")
+    @classmethod
+    def not_in_the_past(cls, v: date):
+        if v < date.today():
+            raise ValueError("scheduled_date cannot be in the past")
+        return v
+
+
+class ManualScheduleIn(BaseModel):
+    exam_date: date
+    sessions: List[ManualSessionIn] = Field(min_length=1, max_length=200)
+
+    @field_validator("exam_date")
+    @classmethod
+    def exam_date_future(cls, v: date):
+        if v < date.today():
+            raise ValueError("exam_date cannot be in the past")
+        return v
+
+
+# ---------------------------------------------------------------------------
 # Modification requests
 # ---------------------------------------------------------------------------
 

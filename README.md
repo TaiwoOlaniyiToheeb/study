@@ -211,7 +211,7 @@ push `study-schedule/` there first.
    the ones marked `sync: false`; the manual path needs all of them):
    - `JWT_SECRET` — the blueprint generates one; manually: `openssl rand -hex 32`
    - `AI_PROVIDER_API_KEY` — your Anthropic API key
-   - `AI_MODEL` — `claude-sonnet-4-6`
+   - `AI_MODEL` — `claude-sonnet-5`
    - `FRONTEND_ORIGINS` — leave as `http://localhost:5173` for now; you'll
      add your Vercel URL after step 3
 3. Deploy. Render gives you a URL like `https://ai-study-schedule-api.onrender.com`.

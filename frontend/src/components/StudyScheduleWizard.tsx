@@ -10,11 +10,14 @@ import { studyScheduleApi } from "../services/studyScheduleApi";
 // as internal sub-components below rather than separate files — each is
 // still a clearly separated, independently testable function component.
 
+// Tertiary-education goal types (university/polytechnic-level), not
+// secondary-school entrance exams (WAEC/NECO/JAMB lead INTO tertiary
+// education, they aren't what a tertiary student is currently sitting for).
 const EXAM_GOAL_OPTIONS = [
-  "School / Semester Examination", "WAEC", "NECO", "JAMB",
-  "Professional Examination", "General Academic Improvement", "Other",
+  "Semester / Course Examination", "Continuous Assessment (CA) / Test",
+  "Professional Certification (e.g. ICAN, CFA, PMP)", "Project / Thesis Defense",
+  "Postgraduate Qualifying Exam", "General Academic Improvement", "Other",
 ];
-const STUDY_HOURS_OPTIONS = [0.5, 1, 1.5, 2, 3];
 const SESSION_DURATIONS = [30, 45, 60, 90, 120] as const;
 const BREAK_DURATIONS = [5, 10, 15, 20, 30] as const;
 
@@ -32,7 +35,6 @@ export default function StudyScheduleWizard({ subjects, onScheduleGenerated, onC
   const [goal, setGoal] = useState<StudyGoal>({
     exam_goal_type: EXAM_GOAL_OPTIONS[0], exam_date: "", daily_study_minutes_goal: 60,
   });
-  const [customHours, setCustomHours] = useState<number | "">("");
   const [availability, setAvailability] = useState<AvailabilityPeriod[]>([]);
   const [preferences, setPreferences] = useState<StudyPreferences>({
     preferred_time: "no_preference", session_duration_min: 60, break_duration_min: 15,
@@ -44,6 +46,14 @@ export default function StudyScheduleWizard({ subjects, onScheduleGenerated, onC
   const [error, setError] = useState<string | null>(null);
 
   const stepIndex = STEP_ORDER.indexOf(step);
+
+  // "Desired study hours per day" and "preferred session duration" were two
+  // separate questions asking essentially the same thing (how much time per
+  // sitting) from two different angles. Collapsed into one control —
+  // preferences.session_duration_min, set in the Preferences step — and the
+  // daily total is derived from that times how many sessions/day the student
+  // allows, rather than asked twice.
+  const derivedDailyMinutes = preferences.session_duration_min * preferences.max_sessions_per_day;
 
   function goNext() {
     if (step === "goal" && !goal.exam_date) { setError("Please pick an examination date."); return; }
@@ -59,10 +69,36 @@ export default function StudyScheduleWizard({ subjects, onScheduleGenerated, onC
     setGenerating(true);
     setError(null);
     try {
-      // In a real integration, goal/preferences/availability would be PUT to
-      // their own endpoints first (POST /study-availability per period, and
-      // a preferences endpoint not shown here for brevity — same pattern as
-      // availability.py). Then:
+      // Only create availability periods that aren't already saved from a
+      // previous Generate attempt — re-POSTing the exact same period twice
+      // trips the backend's overlap check against itself and fails with a
+      // confusing "Overlaps an existing free period" error.
+      const existing = await studyScheduleApi.listAvailability();
+      const alreadySaved = (p: AvailabilityPeriod) =>
+        existing.some(
+          (e) =>
+            e.day_of_week === p.day_of_week &&
+            e.start_time === p.start_time &&
+            e.end_time === p.end_time &&
+            e.period_type === p.period_type
+        );
+      for (const period of availability) {
+        if (!alreadySaved(period)) {
+          await studyScheduleApi.createAvailability(period);
+        }
+      }
+
+      await studyScheduleApi.putStudyPreferences({
+        exam_goal_type: goal.exam_goal_type,
+        exam_goal_other_text: goal.exam_goal_other_text,
+        exam_date: goal.exam_date,
+        daily_study_minutes_goal: derivedDailyMinutes,
+        preferred_time: preferences.preferred_time,
+        session_duration_min: preferences.session_duration_min,
+        break_duration_min: preferences.break_duration_min,
+        max_sessions_per_day: preferences.max_sessions_per_day,
+      });
+
       const schedule = await studyScheduleApi.generateSchedule(selectedSubjectIds);
       onScheduleGenerated(schedule);
     } catch (e: any) {
@@ -76,12 +112,7 @@ export default function StudyScheduleWizard({ subjects, onScheduleGenerated, onC
     <div className="mx-auto max-w-2xl space-y-6 p-4">
       <ProgressBar currentIndex={stepIndex} total={STEP_ORDER.length} />
 
-      {step === "goal" && (
-        <StudyGoalStep
-          goal={goal} onChange={setGoal}
-          customHours={customHours} onCustomHoursChange={setCustomHours}
-        />
-      )}
+      {step === "goal" && <StudyGoalStep goal={goal} onChange={setGoal} />}
       {step === "availability" && (
         <div>
           <h2 className="mb-3 text-lg font-semibold">Weekly Availability</h2>
@@ -89,7 +120,7 @@ export default function StudyScheduleWizard({ subjects, onScheduleGenerated, onC
         </div>
       )}
       {step === "preferences" && (
-        <StudyPreferencesStep preferences={preferences} onChange={setPreferences} />
+        <StudyPreferencesStep preferences={preferences} onChange={setPreferences} derivedDailyMinutes={derivedDailyMinutes} />
       )}
       {step === "subjects" && (
         <SubjectPriorityStep
@@ -102,7 +133,7 @@ export default function StudyScheduleWizard({ subjects, onScheduleGenerated, onC
       )}
       {step === "review" && (
         <ReviewStep goal={goal} preferences={preferences} availability={availability}
-                    subjectCount={selectedSubjectIds.length} />
+                    subjectCount={selectedSubjectIds.length} derivedDailyMinutes={derivedDailyMinutes} />
       )}
 
       {error && <p className="text-sm text-rose-600">{error}</p>}
@@ -144,12 +175,7 @@ function ProgressBar({ currentIndex, total }: { currentIndex: number; total: num
   );
 }
 
-function StudyGoalStep({
-  goal, onChange, customHours, onCustomHoursChange,
-}: {
-  goal: StudyGoal; onChange: (g: StudyGoal) => void;
-  customHours: number | ""; onCustomHoursChange: (v: number | "") => void;
-}) {
+function StudyGoalStep({ goal, onChange }: { goal: StudyGoal; onChange: (g: StudyGoal) => void }) {
   return (
     <div className="space-y-4">
       <h2 className="text-lg font-semibold">Study Goal</h2>
@@ -178,41 +204,17 @@ function StudyGoalStep({
         min={new Date().toISOString().slice(0, 10)}
         onChange={(e) => onChange({ ...goal, exam_date: e.target.value })}
       />
-
-      <label className="block text-sm font-medium">Desired Study Hours Per Day</label>
-      <div className="flex flex-wrap gap-2">
-        {STUDY_HOURS_OPTIONS.map((h) => (
-          <button
-            key={h}
-            className={`rounded border px-3 py-1.5 text-sm ${
-              goal.daily_study_minutes_goal === h * 60 ? "border-slate-800 bg-slate-800 text-white" : "border-slate-300"
-            }`}
-            onClick={() => onChange({ ...goal, daily_study_minutes_goal: h * 60 })}
-          >
-            {h}h
-          </button>
-        ))}
-        <input
-          type="number"
-          min={0.5} max={8} step={0.5}
-          placeholder="Custom"
-          className="w-24 rounded border border-slate-300 px-2 py-1.5 text-sm"
-          value={customHours}
-          onChange={(e) => {
-            const v = e.target.value === "" ? "" : Number(e.target.value);
-            onCustomHoursChange(v);
-            if (v !== "" && v > 0 && v <= 8) onChange({ ...goal, daily_study_minutes_goal: v * 60 });
-          }}
-        />
-      </div>
-      <p className="text-xs text-slate-500">Maximum realistic workload is 8 hours/day.</p>
+      <p className="text-xs text-slate-500">
+        You'll set how long each study session runs, and how many per day, in the next steps — your
+        daily study time is calculated from those.
+      </p>
     </div>
   );
 }
 
 function StudyPreferencesStep({
-  preferences, onChange,
-}: { preferences: StudyPreferences; onChange: (p: StudyPreferences) => void }) {
+  preferences, onChange, derivedDailyMinutes,
+}: { preferences: StudyPreferences; onChange: (p: StudyPreferences) => void; derivedDailyMinutes: number }) {
   return (
     <div className="space-y-4">
       <h2 className="text-lg font-semibold">Study Preferences</h2>
@@ -232,7 +234,7 @@ function StudyPreferencesStep({
         ))}
       </div>
 
-      <label className="block text-sm font-medium">Preferred Session Duration</label>
+      <label className="block text-sm font-medium">Study Session Length</label>
       <div className="flex gap-2">
         {SESSION_DURATIONS.map((d) => (
           <button
@@ -276,6 +278,11 @@ function StudyPreferencesStep({
           </button>
         ))}
       </div>
+
+      <p className="rounded bg-slate-50 px-3 py-2 text-sm text-slate-600">
+        That's up to <strong>{Math.round((derivedDailyMinutes / 60) * 10) / 10}h/day</strong> total
+        ({preferences.max_sessions_per_day} × {preferences.session_duration_min}m sessions).
+      </p>
     </div>
   );
 }
@@ -304,7 +311,7 @@ function SubjectPriorityStep({
             <input type="checkbox" checked={selectedIds.includes(s.subject_id)} onChange={() => toggle(s.subject_id)} />
             <span className="font-medium">{s.name}</span>
             <span className="text-xs text-slate-500">
-              {s.completed_topics} completed \u00b7 {s.incomplete_topics} remaining
+              {s.completed_topics} completed · {s.incomplete_topics} remaining
               {s.performance_percent != null ? ` \u00b7 ${s.performance_percent}%` : ""}
             </span>
           </label>
@@ -325,17 +332,20 @@ function SubjectPriorityStep({
 }
 
 function ReviewStep({
-  goal, preferences, availability, subjectCount,
-}: { goal: StudyGoal; preferences: StudyPreferences; availability: AvailabilityPeriod[]; subjectCount: number }) {
+  goal, preferences, availability, subjectCount, derivedDailyMinutes,
+}: {
+  goal: StudyGoal; preferences: StudyPreferences; availability: AvailabilityPeriod[];
+  subjectCount: number; derivedDailyMinutes: number;
+}) {
   return (
     <div className="space-y-3">
       <h2 className="text-lg font-semibold">Review & Generate</h2>
       <ul className="space-y-1 text-sm text-slate-700">
         <li><strong>Goal:</strong> {goal.exam_goal_type} on {goal.exam_date || "\u2014"}</li>
-        <li><strong>Daily target:</strong> {goal.daily_study_minutes_goal / 60}h/day</li>
+        <li><strong>Session length:</strong> {preferences.session_duration_min}m × {preferences.max_sessions_per_day}/day
+          {" "}(≈{Math.round((derivedDailyMinutes / 60) * 10) / 10}h/day)</li>
         <li><strong>Preferred time:</strong> {preferences.preferred_time.replace("_", " ")}</li>
-        <li><strong>Session / break:</strong> {preferences.session_duration_min}m / {preferences.break_duration_min}m</li>
-        <li><strong>Max sessions/day:</strong> {preferences.max_sessions_per_day}</li>
+        <li><strong>Break:</strong> {preferences.break_duration_min}m</li>
         <li><strong>Availability periods defined:</strong> {availability.length}</li>
         <li><strong>Subjects included:</strong> {subjectCount}</li>
       </ul>

@@ -12,7 +12,7 @@ only ever read/write schedules where `schedule.student_id == current student`.
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -27,6 +27,7 @@ from backend.models.models import (
 from backend.schemas.schemas import (
     StudyScheduleOut, ScheduledSessionOut, UnscheduledTaskOut,
     ManualModificationIn, NaturalLanguageModifyIn, ActivityType, PreferredTime,
+    ManualScheduleIn,
 )
 from backend.services.ai_planner.context_builder import build_student_data
 from backend.services.ai_planner.service import AiPlannerService, AiPlannerError
@@ -162,6 +163,95 @@ async def generate_schedule(
     student_id: UUID = Depends(get_current_student_id),
 ):
     schedule = await _generate_and_persist(db, student_id, subject_ids)
+    return _serialize_schedule(db, schedule)
+
+
+@router.post("/study-schedule/manual", response_model=StudyScheduleOut, status_code=status.HTTP_201_CREATED)
+def create_manual_schedule(
+    payload: ManualScheduleIn,
+    db: Session = Depends(get_db),
+    student_id: UUID = Depends(get_current_student_id),
+):
+    """
+    Fully student-authored schedule — no AI planner call, no spaced-repetition
+    engine. The student picks every subject/topic/activity/date/time
+    themselves. Hard constraints are still enforced here (no double-booking,
+    nothing past the exam date, valid subject/topic references) because
+    those aren't planning judgment calls, they're data-integrity rules that
+    apply regardless of who built the schedule.
+    """
+    if payload.exam_date < date.today():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="exam_date cannot be in the past")
+
+    # Validate every subject/topic reference exists before writing anything.
+    subject_ids = {s.subject_id for s in payload.sessions}
+    topic_ids = {s.topic_id for s in payload.sessions}
+    found_subjects = {row.id for row in db.query(Subject).filter(Subject.id.in_(subject_ids)).all()}
+    found_topics = {row.id for row in db.query(Topic).filter(Topic.id.in_(topic_ids)).all()}
+    missing_subjects = subject_ids - found_subjects
+    missing_topics = topic_ids - found_topics
+    if missing_subjects or missing_topics:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unknown subject id(s): {list(missing_subjects)}, unknown topic id(s): {list(missing_topics)}",
+        )
+
+    # Check for overlaps and after-exam-date sessions within the submitted
+    # batch itself, and against the student's other already-scheduled
+    # sessions — the same hard constraints an AI-generated schedule must
+    # satisfy, just checked directly instead of via the packing algorithm.
+    sorted_sessions = sorted(payload.sessions, key=lambda s: (s.scheduled_date, s.start_time))
+    for i, s in enumerate(sorted_sessions):
+        if s.scheduled_date > payload.exam_date:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                                 detail=f"Session on {s.scheduled_date} is after the exam date")
+        end_time = (datetime.combine(s.scheduled_date, s.start_time) +
+                    timedelta(minutes=s.duration_minutes)).time()
+        for other in sorted_sessions[i + 1:]:
+            if other.scheduled_date != s.scheduled_date:
+                break
+            other_end = (datetime.combine(other.scheduled_date, other.start_time) +
+                         timedelta(minutes=other.duration_minutes)).time()
+            if s.start_time < other_end and other.start_time < end_time:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Two sessions overlap on {s.scheduled_date}: "
+                           f"{s.start_time}-{end_time} and {other.start_time}-{other_end}",
+                )
+
+    existing_sessions = db.query(StudySession).filter(
+        StudySession.student_id == student_id,
+        StudySession.status.in_([ORMSessionStatus.scheduled, ORMSessionStatus.rescheduled]),
+    ).all()
+    for s in sorted_sessions:
+        end_time = (datetime.combine(s.scheduled_date, s.start_time) +
+                    timedelta(minutes=s.duration_minutes)).time()
+        for existing in existing_sessions:
+            if existing.scheduled_date != s.scheduled_date:
+                continue
+            if s.start_time < existing.end_time and existing.start_time < end_time:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Overlaps an already-scheduled session on {s.scheduled_date} "
+                           f"({existing.start_time}-{existing.end_time})",
+                )
+
+    schedule = StudySchedule(student_id=student_id, status=ScheduleStatus.draft, exam_date=payload.exam_date)
+    db.add(schedule)
+    db.flush()
+
+    for s in sorted_sessions:
+        end_time = (datetime.combine(s.scheduled_date, s.start_time) +
+                    timedelta(minutes=s.duration_minutes)).time()
+        db.add(StudySession(
+            schedule_id=schedule.id, student_id=student_id, subject_id=s.subject_id,
+            topic_id=s.topic_id, activity_type=s.activity_type, scheduled_date=s.scheduled_date,
+            start_time=s.start_time, end_time=end_time, duration_minutes=s.duration_minutes,
+            status=ORMSessionStatus.scheduled, priority=3, reason="Manually scheduled by student.",
+        ))
+
+    db.commit()
+    db.refresh(schedule)
     return _serialize_schedule(db, schedule)
 
 
