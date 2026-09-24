@@ -107,7 +107,6 @@ export default function StudyScheduleWizard({ subjects, onScheduleGenerated, onC
       setGenerating(false);
     }
   }
-
   return (
     <div className="mx-auto max-w-2xl space-y-6 p-4">
       <ProgressBar currentIndex={stepIndex} total={STEP_ORDER.length} />

@@ -83,7 +83,7 @@ export const studyScheduleApi = {
       body: JSON.stringify(period),
     }),
 
-  deleteAvailability: (id: string) =>
+    deleteAvailability: (id: string) =>
     request<void>(`/study-availability/${id}`, { method: "DELETE" }),
 
   putStudyPreferences: (payload: {
