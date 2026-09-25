@@ -1,17 +1,56 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import WeeklyCalendar from "./components/WeeklyCalendar";
 import ScheduleExplanation from "./components/ScheduleExplanation";
 import LoginForm from "./components/LoginForm";
 import { AiStudyScheduleCard } from "./pages/StudyScheduleDashboard";
 import StudyScheduleDashboardPage from "./pages/StudyScheduleDashboard";
-import { StudySchedule, ScheduledSession } from "./types";
-import { mockSchedule, mockSubjects } from "./mockData";
+import { StudySchedule, ScheduledSession, SubjectSummary } from "./types";
+import { mockSchedule } from "./mockData";
+import { studyScheduleApi } from "./services/studyScheduleApi";
 
 type Mode = "demo" | "live";
 
 export default function App() {
   const [mode, setMode] = useState<Mode>("demo");
   const [authed, setAuthed] = useState<boolean>(() => !!localStorage.getItem("auth_token"));
+  const [liveSubjects, setLiveSubjects] = useState<SubjectSummary[]>([]);
+  const [subjectsLoading, setSubjectsLoading] = useState(false);
+  const [subjectsError, setSubjectsError] = useState<string | null>(null);
+
+  // Live mode must show real subjects from the backend, never the mock set.
+  useEffect(() => {
+    if (mode !== "live" || !authed) return;
+    let cancelled = false;
+    setSubjectsLoading(true);
+    setSubjectsError(null);
+
+    studyScheduleApi
+      .listSubjects()
+      .then(async (subjects) => {
+        const withTopicCounts = await Promise.all(
+          subjects.map(async (s) => {
+            const topics = await studyScheduleApi.listTopics(s.id).catch(() => []);
+            return {
+              subject_id: s.id,
+              name: s.name,
+              completed_topics: 0,
+              incomplete_topics: topics.length,
+            } as SubjectSummary;
+          })
+        );
+        if (!cancelled) setLiveSubjects(withTopicCounts);
+      })
+      .catch((e) => {
+        if (!cancelled) setSubjectsError(e.message ?? "Couldn't load subjects from the backend.");
+      })
+      .finally(() => {
+        if (!cancelled) setSubjectsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, authed]);
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -50,10 +89,14 @@ export default function App() {
 
       {mode === "demo" ? (
         <DemoView />
-      ) : authed ? (
-        <StudyScheduleDashboardPage subjects={mockSubjects} />
-      ) : (
+      ) : !authed ? (
         <LoginForm onAuthenticated={() => setAuthed(true)} />
+      ) : subjectsLoading ? (
+        <p className="p-6 text-sm text-slate-500">Loading subjects...</p>
+      ) : subjectsError ? (
+        <p className="p-6 text-sm text-rose-600">{subjectsError}</p>
+      ) : (
+        <StudyScheduleDashboardPage subjects={liveSubjects} />
       )}
     </div>
   );

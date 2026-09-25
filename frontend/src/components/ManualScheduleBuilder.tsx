@@ -33,6 +33,13 @@ export default function ManualScheduleBuilder({ onScheduleCreated, onCancel }: P
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  const [showNewSubject, setShowNewSubject] = useState(false);
+  const [newSubjectName, setNewSubjectName] = useState("");
+  const [creatingSubject, setCreatingSubject] = useState(false);
+  const [showNewTopic, setShowNewTopic] = useState(false);
+  const [newTopicName, setNewTopicName] = useState("");
+  const [creatingTopic, setCreatingTopic] = useState(false);
+
   useEffect(() => {
     studyScheduleApi.listSubjects().then(setSubjects).catch(() => setSubjects([]));
   }, []);
@@ -43,6 +50,43 @@ export default function ManualScheduleBuilder({ onScheduleCreated, onCancel }: P
       setTopicsBySubject((prev) => ({ ...prev, [draft.subject_id]: topics }))
     );
   }, [draft.subject_id, topicsBySubject]);
+
+  async function handleCreateSubject() {
+    if (!newSubjectName.trim()) return;
+    setCreatingSubject(true);
+    setError(null);
+    try {
+      const created = await studyScheduleApi.createSubject(newSubjectName.trim());
+      setSubjects((prev) => [...prev, created]);
+      setDraft({ ...draft, subject_id: created.id, topic_id: "" });
+      setNewSubjectName("");
+      setShowNewSubject(false);
+    } catch (e: any) {
+      setError(e.message ?? "Couldn't create that subject.");
+    } finally {
+      setCreatingSubject(false);
+    }
+  }
+
+  async function handleCreateTopic() {
+    if (!newTopicName.trim() || !draft.subject_id) return;
+    setCreatingTopic(true);
+    setError(null);
+    try {
+      const created = await studyScheduleApi.createTopic(draft.subject_id, { name: newTopicName.trim() });
+      setTopicsBySubject((prev) => ({
+        ...prev,
+        [draft.subject_id]: [...(prev[draft.subject_id] ?? []), created],
+      }));
+      setDraft({ ...draft, topic_id: created.id });
+      setNewTopicName("");
+      setShowNewTopic(false);
+    } catch (e: any) {
+      setError(e.message ?? "Couldn't create that topic.");
+    } finally {
+      setCreatingTopic(false);
+    }
+  }
 
   function addSession() {
     setError(null);
@@ -100,26 +144,102 @@ export default function ManualScheduleBuilder({ onScheduleCreated, onCancel }: P
 
       <div className="space-y-3 rounded-lg border border-slate-200 p-4">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-          <select
-            className="rounded border border-slate-300 px-2 py-1.5 text-sm"
-            value={draft.subject_id}
-            onChange={(e) => setDraft({ ...draft, subject_id: e.target.value, topic_id: "" })}
-          >
-            <option value="">Subject…</option>
-            {subjects.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-          </select>
+          <div className="space-y-1">
+            <select
+              className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+              value={draft.subject_id}
+              onChange={(e) => setDraft({ ...draft, subject_id: e.target.value, topic_id: "" })}
+            >
+              <option value="">Subject...</option>
+              {subjects.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+            {!showNewSubject ? (
+              <button
+                type="button"
+                className="text-xs text-slate-500 hover:underline"
+                onClick={() => setShowNewSubject(true)}
+              >
+                + Don't see your subject? Add it
+              </button>
+            ) : (
+              <div className="flex gap-1">
+                <input
+                  autoFocus
+                  className="min-w-0 flex-1 rounded border border-slate-300 px-2 py-1 text-xs"
+                  placeholder="e.g. Organic Chemistry"
+                  value={newSubjectName}
+                  onChange={(e) => setNewSubjectName(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleCreateSubject()}
+                />
+                <button
+                  type="button"
+                  className="rounded bg-slate-800 px-2 py-1 text-xs text-white disabled:opacity-50"
+                  onClick={handleCreateSubject}
+                  disabled={creatingSubject}
+                >
+                  Add
+                </button>
+                <button
+                  type="button"
+                  className="text-xs text-slate-400 hover:underline"
+                  onClick={() => { setShowNewSubject(false); setNewSubjectName(""); }}
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
+          </div>
 
-          <select
-            className="rounded border border-slate-300 px-2 py-1.5 text-sm"
-            value={draft.topic_id}
-            onChange={(e) => setDraft({ ...draft, topic_id: e.target.value })}
-            disabled={!draft.subject_id}
-          >
-            <option value="">Topic…</option>
-            {(topicsBySubject[draft.subject_id] ?? []).map((t) => (
-              <option key={t.id} value={t.id}>{t.name}</option>
-            ))}
-          </select>
+          <div className="space-y-1">
+            <select
+              className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+              value={draft.topic_id}
+              onChange={(e) => setDraft({ ...draft, topic_id: e.target.value })}
+              disabled={!draft.subject_id}
+            >
+              <option value="">Topic...</option>
+              {(topicsBySubject[draft.subject_id] ?? []).map((t) => (
+                <option key={t.id} value={t.id}>{t.name}</option>
+              ))}
+            </select>
+            {draft.subject_id && (
+              !showNewTopic ? (
+                <button
+                  type="button"
+                  className="text-xs text-slate-500 hover:underline"
+                  onClick={() => setShowNewTopic(true)}
+                >
+                  + Add a topic
+                </button>
+              ) : (
+                <div className="flex gap-1">
+                  <input
+                    autoFocus
+                    className="min-w-0 flex-1 rounded border border-slate-300 px-2 py-1 text-xs"
+                    placeholder="e.g. Thermodynamics"
+                    value={newTopicName}
+                    onChange={(e) => setNewTopicName(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handleCreateTopic()}
+                  />
+                  <button
+                    type="button"
+                    className="rounded bg-slate-800 px-2 py-1 text-xs text-white disabled:opacity-50"
+                    onClick={handleCreateTopic}
+                    disabled={creatingTopic}
+                  >
+                    Add
+                  </button>
+                  <button
+                    type="button"
+                    className="text-xs text-slate-400 hover:underline"
+                    onClick={() => { setShowNewTopic(false); setNewTopicName(""); }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )
+            )}
+          </div>
 
           <select
             className="rounded border border-slate-300 px-2 py-1.5 text-sm"
@@ -165,7 +285,7 @@ export default function ManualScheduleBuilder({ onScheduleCreated, onCancel }: P
             {sessions.map((s, i) => (
               <li key={i} className="flex items-center justify-between rounded border border-slate-200 p-2 text-sm">
                 <span>
-                  {s.scheduled_date} {s.start_time} ({s.duration_minutes}m) —{" "}
+                  {s.scheduled_date} {s.start_time} ({s.duration_minutes}m) &mdash;{" "}
                   <strong>{subjectName(s.subject_id)}</strong> / {topicName(s.subject_id, s.topic_id)} / {s.activity_type}
                 </span>
                 <button className="text-xs text-rose-600 hover:underline" onClick={() => removeSession(i)}>
@@ -186,7 +306,7 @@ export default function ManualScheduleBuilder({ onScheduleCreated, onCancel }: P
           onClick={handleSubmit}
           disabled={submitting}
         >
-          {submitting ? "Saving\u2026" : "Create Schedule"}
+          {submitting ? "Saving..." : "Create Schedule"}
         </button>
       </div>
     </div>

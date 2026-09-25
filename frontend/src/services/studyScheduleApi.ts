@@ -83,7 +83,7 @@ export const studyScheduleApi = {
       body: JSON.stringify(period),
     }),
 
-    deleteAvailability: (id: string) =>
+  deleteAvailability: (id: string) =>
     request<void>(`/study-availability/${id}`, { method: "DELETE" }),
 
   putStudyPreferences: (payload: {
@@ -98,5 +98,17 @@ export const studyScheduleApi = {
   listTopics: (subjectId: string) =>
     request<{ id: string; subject_id: string; name: string; difficulty: number; sequence_index: number }[]>(
       `/subjects/${subjectId}/topics`
+    ),
+
+  createSubject: (name: string) =>
+    request<{ id: string; name: string }>("/subjects", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    }),
+
+  createTopic: (subjectId: string, payload: { name: string; difficulty?: number }) =>
+    request<{ id: string; subject_id: string; name: string; difficulty: number; sequence_index: number }>(
+      `/subjects/${subjectId}/topics`,
+      { method: "POST", body: JSON.stringify(payload) }
     ),
 };
