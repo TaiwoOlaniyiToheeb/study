@@ -41,6 +41,11 @@ export default function StudyScheduleWizard({ subjects, onScheduleGenerated, onC
     max_sessions_per_day: 3,
   });
   const [priorities, setPriorities] = useState<Record<string, number>>({});
+  // Local, appendable copy of the subjects list — lets the student add a
+  // subject inline (e.g. their DB has none yet) without needing this wizard
+  // to round-trip through the parent component. New subjects persist to the
+  // backend immediately on creation, so they'll be there next time too.
+  const [subjectList, setSubjectList] = useState<SubjectSummary[]>(subjects);
   const [selectedSubjectIds, setSelectedSubjectIds] = useState<string[]>(subjects.map((s) => s.subject_id));
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -63,6 +68,15 @@ export default function StudyScheduleWizard({ subjects, onScheduleGenerated, onC
   function goBack() {
     setError(null);
     setStep(STEP_ORDER[Math.max(stepIndex - 1, 0)]);
+  }
+
+  async function handleCreateSubject(name: string) {
+    const created = await studyScheduleApi.createSubject(name);
+    const newSubject: SubjectSummary = {
+      subject_id: created.id, name: created.name, completed_topics: 0, incomplete_topics: 0,
+    };
+    setSubjectList((prev) => [...prev, newSubject]);
+    setSelectedSubjectIds((prev) => [...prev, created.id]);
   }
 
   async function handleGenerate() {
@@ -107,6 +121,7 @@ export default function StudyScheduleWizard({ subjects, onScheduleGenerated, onC
       setGenerating(false);
     }
   }
+
   return (
     <div className="mx-auto max-w-2xl space-y-6 p-4">
       <ProgressBar currentIndex={stepIndex} total={STEP_ORDER.length} />
@@ -123,11 +138,12 @@ export default function StudyScheduleWizard({ subjects, onScheduleGenerated, onC
       )}
       {step === "subjects" && (
         <SubjectPriorityStep
-          subjects={subjects}
+          subjects={subjectList}
           selectedIds={selectedSubjectIds}
           onSelectedChange={setSelectedSubjectIds}
           priorities={priorities}
           onPrioritiesChange={setPriorities}
+          onCreateSubject={handleCreateSubject}
         />
       )}
       {step === "review" && (
@@ -287,16 +303,38 @@ function StudyPreferencesStep({
 }
 
 function SubjectPriorityStep({
-  subjects, selectedIds, onSelectedChange, priorities, onPrioritiesChange,
+  subjects, selectedIds, onSelectedChange, priorities, onPrioritiesChange, onCreateSubject,
 }: {
   subjects: SubjectSummary[]; selectedIds: string[]; onSelectedChange: (ids: string[]) => void;
   priorities: Record<string, number>; onPrioritiesChange: (p: Record<string, number>) => void;
+  onCreateSubject: (name: string) => Promise<void>;
 }) {
+  const [showAdd, setShowAdd] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+
   function toggle(id: string) {
     onSelectedChange(
       selectedIds.includes(id) ? selectedIds.filter((s) => s !== id) : [...selectedIds, id]
     );
   }
+
+  async function handleAdd() {
+    if (!newName.trim()) return;
+    setCreating(true);
+    setCreateError(null);
+    try {
+      await onCreateSubject(newName.trim());
+      setNewName("");
+      setShowAdd(false);
+    } catch (e: any) {
+      setCreateError(e.message ?? "Couldn't add that subject.");
+    } finally {
+      setCreating(false);
+    }
+  }
+
   return (
     <div className="space-y-3">
       <h2 className="text-lg font-semibold">Subject Priorities</h2>
@@ -304,13 +342,20 @@ function SubjectPriorityStep({
         Star ratings below reflect your recent performance data. You can override the priority manually,
         but the AI will still weigh objective performance data alongside your input.
       </p>
+
+      {subjects.length === 0 && (
+        <p className="rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
+          No subjects yet — add at least one below before generating a schedule.
+        </p>
+      )}
+
       {subjects.map((s) => (
         <div key={s.subject_id} className="flex items-center justify-between rounded border border-slate-200 p-3">
           <label className="flex items-center gap-2">
             <input type="checkbox" checked={selectedIds.includes(s.subject_id)} onChange={() => toggle(s.subject_id)} />
             <span className="font-medium">{s.name}</span>
             <span className="text-xs text-slate-500">
-              {s.completed_topics} completed · {s.incomplete_topics} remaining
+              {s.completed_topics} completed \u00b7 {s.incomplete_topics} remaining
               {s.performance_percent != null ? ` \u00b7 ${s.performance_percent}%` : ""}
             </span>
           </label>
@@ -326,6 +371,43 @@ function SubjectPriorityStep({
           </select>
         </div>
       ))}
+
+      {!showAdd ? (
+        <button
+          type="button"
+          className="rounded border border-dashed border-slate-300 px-4 py-2 text-sm text-slate-600 hover:border-slate-400"
+          onClick={() => setShowAdd(true)}
+        >
+          + Add a subject
+        </button>
+      ) : (
+        <div className="flex items-center gap-2 rounded border border-slate-200 p-3">
+          <input
+            autoFocus
+            className="flex-1 rounded border border-slate-300 px-2 py-1.5 text-sm"
+            placeholder="e.g. Financial Accounting"
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleAdd()}
+          />
+          <button
+            type="button"
+            className="rounded bg-slate-800 px-3 py-1.5 text-sm text-white disabled:opacity-50"
+            onClick={handleAdd}
+            disabled={creating}
+          >
+            {creating ? "Adding\u2026" : "Add"}
+          </button>
+          <button
+            type="button"
+            className="text-sm text-slate-400 hover:underline"
+            onClick={() => { setShowAdd(false); setNewName(""); }}
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+      {createError && <p className="text-sm text-rose-600">{createError}</p>}
     </div>
   );
 }
